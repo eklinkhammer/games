@@ -34,19 +34,17 @@
         ws = new WebSocket(proto + "//" + window.location.host + "/api/sessions/" + code + "/ws");
 
         ws.onopen = () => {
-            ws.send(JSON.stringify({type: "join", payload: JSON.stringify({playerId: playerID})}));
+            ws.send(JSON.stringify({type: "join", payload: {playerId: playerID}}));
         };
 
         ws.onmessage = (evt) => {
             const msg = JSON.parse(evt.data);
             if (msg.type === "error") {
-                const payload = JSON.parse(msg.payload);
-                showError(payload.message);
+                showError(msg.payload.message);
                 return;
             }
             if (msg.type === "state") {
-                const payload = JSON.parse(msg.payload);
-                handleState(payload);
+                handleState(msg.payload);
             }
         };
 
@@ -116,14 +114,14 @@
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
                 type: "action",
-                payload: JSON.stringify({action: action})
+                payload: {action: action}
             }));
         }
     }
 
     startBtn.addEventListener("click", () => {
         if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({type: "start", payload: "{}"}));
+            ws.send(JSON.stringify({type: "start", payload: {}}));
         }
     });
 

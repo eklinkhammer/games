@@ -2,7 +2,6 @@
     const gameSelect = document.getElementById("game-select");
     const createBtn = document.getElementById("create-btn");
     const joinBtn = document.getElementById("join-btn");
-    const sessionsList = document.getElementById("sessions-list");
     const errorMsg = document.getElementById("error-msg");
 
     function showError(msg) {

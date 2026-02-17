@@ -15,18 +15,8 @@ window.TicTacToeRenderer = (function() {
 
         const validCells = new Set();
         validActions.forEach(a => {
-            try {
-                const p = JSON.parse(JSON.stringify(a.payload));
-                if (typeof p === "object" && p.cell !== undefined) {
-                    validCells.add(p.cell);
-                } else if (typeof p === "number") {
-                    validCells.add(p);
-                }
-            } catch(e) {
-                // If payload is already parsed
-                if (a.payload && a.payload.cell !== undefined) {
-                    validCells.add(a.payload.cell);
-                }
+            if (a.payload && a.payload.cell !== undefined) {
+                validCells.add(a.payload.cell);
             }
         });
 

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"time"
 
+	games "games"
 	"games/internal/game"
 	"games/internal/game/tictactoe"
 	"games/internal/server"
@@ -38,10 +40,13 @@ func main() {
 		log.Printf("warning: restore sessions: %v", err)
 	}
 
-	// Cleanup stale sessions every minute, remove after 1 hour
 	go mgr.CleanupLoop(1*time.Minute, 1*time.Hour)
 
-	srv := server.New(registry, mgr, os.DirFS("web"))
+	webFS, err := fs.Sub(games.WebFS, "web")
+	if err != nil {
+		log.Fatalf("web fs: %v", err)
+	}
+	srv := server.New(registry, mgr, webFS)
 
 	log.Printf("listening on %s", addr)
 	if err := http.ListenAndServe(addr, srv); err != nil {
