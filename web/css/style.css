@@ -1,0 +1,170 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #1a1a2e;
+    color: #eee;
+    min-height: 100vh;
+}
+
+.container {
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 2rem 1rem;
+}
+
+h1 {
+    margin-bottom: 1.5rem;
+    color: #e94560;
+}
+
+h2 {
+    margin-bottom: 0.75rem;
+    color: #0f3460;
+    color: #16213e;
+    color: #e94560;
+    font-size: 1.1rem;
+}
+
+.section {
+    background: #16213e;
+    padding: 1.25rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+}
+
+.form-row {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+input, select {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #0f3460;
+    border-radius: 4px;
+    background: #1a1a2e;
+    color: #eee;
+    font-size: 0.9rem;
+    flex: 1;
+    min-width: 120px;
+}
+
+button, .btn {
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 4px;
+    background: #e94560;
+    color: white;
+    font-size: 0.9rem;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+}
+
+button:hover, .btn:hover {
+    background: #c73e54;
+}
+
+.error {
+    background: #e94560;
+    padding: 0.75rem;
+    border-radius: 4px;
+    margin-top: 1rem;
+}
+
+.session-header {
+    margin-bottom: 1rem;
+}
+
+.session-info {
+    display: flex;
+    gap: 1.5rem;
+    color: #aaa;
+    font-size: 0.9rem;
+}
+
+#players ul {
+    list-style: none;
+    padding: 0;
+}
+
+#players li {
+    padding: 0.3rem 0;
+}
+
+/* Tic-tac-toe board */
+.ttt-board {
+    display: grid;
+    grid-template-columns: repeat(3, 100px);
+    grid-template-rows: repeat(3, 100px);
+    gap: 4px;
+    margin: 1rem auto;
+    width: fit-content;
+}
+
+.ttt-cell {
+    background: #16213e;
+    border: 2px solid #0f3460;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2.5rem;
+    font-weight: bold;
+    cursor: pointer;
+    color: #eee;
+}
+
+.ttt-cell:hover {
+    background: #1a2744;
+}
+
+.ttt-cell.x { color: #e94560; }
+.ttt-cell.o { color: #0f3460; color: #53a8b6; }
+.ttt-cell.disabled { cursor: default; }
+
+#game-status {
+    text-align: center;
+    font-size: 1.1rem;
+    margin: 0.75rem 0;
+}
+
+#results-list {
+    margin-bottom: 1rem;
+}
+
+.result-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.3rem 0;
+}
+
+.sessions-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.session-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #1a1a2e;
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+}
+
+.session-card .code {
+    font-weight: bold;
+    color: #e94560;
+}
+
+.session-card .meta {
+    color: #aaa;
+    font-size: 0.85rem;
+}

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game Lobby</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Game Lobby</h1>
+
+        <div class="section">
+            <h2>Create a Session</h2>
+            <div class="form-row">
+                <input type="text" id="player-name" placeholder="Your name" />
+                <select id="game-select"></select>
+                <button id="create-btn">Create</button>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Join a Session</h2>
+            <div class="form-row">
+                <input type="text" id="join-name" placeholder="Your name" />
+                <input type="text" id="join-code" placeholder="Session code" />
+                <button id="join-btn">Join</button>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Active Sessions</h2>
+            <div id="sessions-list"></div>
+        </div>
+
+        <div id="error-msg" class="error" hidden></div>
+    </div>
+
+    <script src="/js/lobby.js"></script>
+</body>
+</html>
