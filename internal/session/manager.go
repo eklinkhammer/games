@@ -191,3 +191,15 @@ func (m *Manager) SaveSessionPlayers(s *Session) error {
 	data, _ := json.Marshal(snap)
 	return m.store.SaveMatchState(s.Code+"_players", string(data))
 }
+
+func (m *Manager) loadSessionPlayers(code string) (sessionSnapshot, error) {
+	data, err := m.store.GetMatchState(code + "_players")
+	if err != nil {
+		return sessionSnapshot{}, err
+	}
+	var snap sessionSnapshot
+	if err := json.Unmarshal([]byte(data), &snap); err != nil {
+		return sessionSnapshot{}, err
+	}
+	return snap, nil
+}

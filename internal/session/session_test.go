@@ -430,18 +430,11 @@ func TestManagerSaveSessionPlayers(t *testing.T) {
 		t.Fatalf("save session players: %v", err)
 	}
 
-	// Verify it was persisted
-	data, err := store.GetMatchState(sess.Code + "_players")
+	// Verify roundtrip through the manager's own load method
+	mgr2 := NewManager(reg, store)
+	snap, err := mgr2.loadSessionPlayers(sess.Code)
 	if err != nil {
-		t.Fatalf("get saved players: %v", err)
-	}
-
-	var snap struct {
-		Players []string `json:"players"`
-		HostID  string   `json:"hostId"`
-	}
-	if err := json.Unmarshal([]byte(data), &snap); err != nil {
-		t.Fatalf("unmarshal snapshot: %v", err)
+		t.Fatalf("load session players: %v", err)
 	}
 	if len(snap.Players) != 2 {
 		t.Fatalf("expected 2 players persisted, got %d", len(snap.Players))
