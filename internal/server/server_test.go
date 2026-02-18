@@ -3,42 +3,17 @@ package server
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
-	"testing/fstest"
 
 	"games/internal/game"
-	"games/internal/game/tictactoe"
 	"games/internal/session"
-	"games/internal/storage"
 )
 
-func setupTestServer(t *testing.T) *httptest.Server {
-	t.Helper()
-	store, err := storage.New(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { store.Close() })
-
-	reg := game.NewRegistry()
-	reg.Register(tictactoe.TicTacToe{})
-	mgr := session.NewManager(reg, store)
-
-	webFS := fstest.MapFS{
-		"index.html": &fstest.MapFile{Data: []byte("<html></html>")},
-	}
-	srv := New(reg, mgr, webFS)
-	ts := httptest.NewServer(srv)
-	t.Cleanup(ts.Close)
-	return ts
-}
-
 func TestListGames(t *testing.T) {
-	ts := setupTestServer(t)
+	env := setupTestEnv(t)
 
-	resp, err := http.Get(ts.URL + "/api/games")
+	resp, err := http.Get(env.ts.URL + "/api/games")
 	if err != nil {
 		t.Fatalf("GET /api/games: %v", err)
 	}
@@ -58,10 +33,10 @@ func TestListGames(t *testing.T) {
 }
 
 func TestCreateSessionValid(t *testing.T) {
-	ts := setupTestServer(t)
+	env := setupTestEnv(t)
 
 	body := `{"gameType":"tictactoe","playerId":"alice"}`
-	resp, err := http.Post(ts.URL+"/api/sessions", "application/json", strings.NewReader(body))
+	resp, err := http.Post(env.ts.URL+"/api/sessions", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST /api/sessions: %v", err)
 	}
@@ -81,10 +56,10 @@ func TestCreateSessionValid(t *testing.T) {
 }
 
 func TestCreateSessionMissingFields(t *testing.T) {
-	ts := setupTestServer(t)
+	env := setupTestEnv(t)
 
 	body := `{"gameType":"","playerId":""}`
-	resp, err := http.Post(ts.URL+"/api/sessions", "application/json", strings.NewReader(body))
+	resp, err := http.Post(env.ts.URL+"/api/sessions", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
@@ -96,9 +71,9 @@ func TestCreateSessionMissingFields(t *testing.T) {
 }
 
 func TestCreateSessionInvalidBody(t *testing.T) {
-	ts := setupTestServer(t)
+	env := setupTestEnv(t)
 
-	resp, err := http.Post(ts.URL+"/api/sessions", "application/json", strings.NewReader("not json"))
+	resp, err := http.Post(env.ts.URL+"/api/sessions", "application/json", strings.NewReader("not json"))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
@@ -110,10 +85,10 @@ func TestCreateSessionInvalidBody(t *testing.T) {
 }
 
 func TestCreateSessionUnknownGame(t *testing.T) {
-	ts := setupTestServer(t)
+	env := setupTestEnv(t)
 
 	body := `{"gameType":"chess","playerId":"alice"}`
-	resp, err := http.Post(ts.URL+"/api/sessions", "application/json", strings.NewReader(body))
+	resp, err := http.Post(env.ts.URL+"/api/sessions", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
@@ -125,20 +100,22 @@ func TestCreateSessionUnknownGame(t *testing.T) {
 }
 
 func TestGetSessionFound(t *testing.T) {
-	ts := setupTestServer(t)
+	env := setupTestEnv(t)
 
 	// Create a session first
 	body := `{"gameType":"tictactoe","playerId":"alice"}`
-	resp, err := http.Post(ts.URL+"/api/sessions", "application/json", strings.NewReader(body))
+	resp, err := http.Post(env.ts.URL+"/api/sessions", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	var created createSessionResponse
-	json.NewDecoder(resp.Body).Decode(&created)
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
 	resp.Body.Close()
 
 	// Get it
-	resp, err = http.Get(ts.URL + "/api/sessions/" + created.Code)
+	resp, err = http.Get(env.ts.URL + "/api/sessions/" + created.Code)
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -161,9 +138,9 @@ func TestGetSessionFound(t *testing.T) {
 }
 
 func TestGetSessionNotFound(t *testing.T) {
-	ts := setupTestServer(t)
+	env := setupTestEnv(t)
 
-	resp, err := http.Get(ts.URL + "/api/sessions/nonexistent")
+	resp, err := http.Get(env.ts.URL + "/api/sessions/nonexistent")
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -175,37 +152,20 @@ func TestGetSessionNotFound(t *testing.T) {
 }
 
 func TestStartSessionValid(t *testing.T) {
-	ts := setupTestServer(t)
+	env := setupTestEnv(t)
 
-	// Create session with alice
-	body := `{"gameType":"tictactoe","playerId":"alice"}`
-	resp, _ := http.Post(ts.URL+"/api/sessions", "application/json", strings.NewReader(body))
-	var created createSessionResponse
-	json.NewDecoder(resp.Body).Decode(&created)
-	resp.Body.Close()
+	sess, err := env.mgr.Create("tictactoe")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := sess.AddPlayer("alice"); err != nil {
+		t.Fatalf("add alice: %v", err)
+	}
+	if err := sess.AddPlayer("bob"); err != nil {
+		t.Fatalf("add bob: %v", err)
+	}
 
-	// Add bob via another create... no, we need to join bob via WS or direct manager access.
-	// Instead, use the GET to get the session info and join bob via a second POST won't work.
-	// The server doesn't expose a "join" REST endpoint — joining is via WebSocket.
-	// So let's access the manager through the server's internal state.
-	// Actually, the test server setup doesn't expose the manager. Let me create a custom setup.
-
-	// Create a custom test with direct manager access
-	store, _ := storage.New(":memory:")
-	defer store.Close()
-	reg := game.NewRegistry()
-	reg.Register(tictactoe.TicTacToe{})
-	mgr := session.NewManager(reg, store)
-	webFS := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}}
-	srv := New(reg, mgr, webFS)
-	testSrv := httptest.NewServer(srv)
-	defer testSrv.Close()
-
-	sess, _ := mgr.Create("tictactoe")
-	sess.AddPlayer("alice")
-	sess.AddPlayer("bob")
-
-	resp, err := http.Post(testSrv.URL+"/api/sessions/"+sess.Code+"/start", "application/json", nil)
+	resp, err := http.Post(env.ts.URL+"/api/sessions/"+sess.Code+"/start", "application/json", nil)
 	if err != nil {
 		t.Fatalf("POST start: %v", err)
 	}
@@ -217,9 +177,9 @@ func TestStartSessionValid(t *testing.T) {
 }
 
 func TestStartSessionNotFound(t *testing.T) {
-	ts := setupTestServer(t)
+	env := setupTestEnv(t)
 
-	resp, err := http.Post(ts.URL+"/api/sessions/nonexistent/start", "application/json", nil)
+	resp, err := http.Post(env.ts.URL+"/api/sessions/nonexistent/start", "application/json", nil)
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
@@ -231,20 +191,17 @@ func TestStartSessionNotFound(t *testing.T) {
 }
 
 func TestStartSessionNotEnoughPlayers(t *testing.T) {
-	store, _ := storage.New(":memory:")
-	defer store.Close()
-	reg := game.NewRegistry()
-	reg.Register(tictactoe.TicTacToe{})
-	mgr := session.NewManager(reg, store)
-	webFS := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}}
-	srv := New(reg, mgr, webFS)
-	testSrv := httptest.NewServer(srv)
-	defer testSrv.Close()
+	env := setupTestEnv(t)
 
-	sess, _ := mgr.Create("tictactoe")
-	sess.AddPlayer("alice") // only 1 player, need 2
+	sess, err := env.mgr.Create("tictactoe")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := sess.AddPlayer("alice"); err != nil {
+		t.Fatalf("add alice: %v", err)
+	}
 
-	resp, err := http.Post(testSrv.URL+"/api/sessions/"+sess.Code+"/start", "application/json", nil)
+	resp, err := http.Post(env.ts.URL+"/api/sessions/"+sess.Code+"/start", "application/json", nil)
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}

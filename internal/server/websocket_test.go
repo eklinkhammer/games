@@ -5,79 +5,16 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	"nhooyr.io/websocket"
 
 	"games/internal/game"
-	"games/internal/game/tictactoe"
 	"games/internal/session"
-	"games/internal/storage"
-
-	"net/http/httptest"
 )
 
-type wsTestEnv struct {
-	ts  *httptest.Server
-	mgr *session.Manager
-	reg *game.Registry
-}
-
-func setupWSTest(t *testing.T) *wsTestEnv {
-	t.Helper()
-	store, err := storage.New(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { store.Close() })
-
-	reg := game.NewRegistry()
-	reg.Register(tictactoe.TicTacToe{})
-	mgr := session.NewManager(reg, store)
-
-	webFS := fstest.MapFS{
-		"index.html": &fstest.MapFile{Data: []byte("<html></html>")},
-	}
-	srv := New(reg, mgr, webFS)
-	ts := httptest.NewServer(srv)
-	t.Cleanup(ts.Close)
-
-	return &wsTestEnv{ts: ts, mgr: mgr, reg: reg}
-}
-
-func wsURL(ts *httptest.Server, code string) string {
-	return strings.Replace(ts.URL, "http://", "ws://", 1) + "/api/sessions/" + code + "/ws"
-}
-
-func wsSend(ctx context.Context, t *testing.T, conn *websocket.Conn, msg WSMessage) {
-	t.Helper()
-	data, _ := json.Marshal(msg)
-	if err := conn.Write(ctx, websocket.MessageText, data); err != nil {
-		t.Fatalf("ws write: %v", err)
-	}
-}
-
-func wsRead(ctx context.Context, t *testing.T, conn *websocket.Conn) WSMessage {
-	t.Helper()
-	_, data, err := conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("ws read: %v", err)
-	}
-	var msg WSMessage
-	if err := json.Unmarshal(data, &msg); err != nil {
-		t.Fatalf("unmarshal ws message: %v", err)
-	}
-	return msg
-}
-
-func joinMsg(playerID string) WSMessage {
-	payload, _ := json.Marshal(joinPayload{PlayerID: playerID})
-	return WSMessage{Type: "join", Payload: payload}
-}
-
 func TestWSJoinAndReceiveState(t *testing.T) {
-	env := setupWSTest(t)
+	env := setupTestEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -107,7 +44,7 @@ func TestWSJoinAndReceiveState(t *testing.T) {
 }
 
 func TestWSJoinNewPlayer(t *testing.T) {
-	env := setupWSTest(t)
+	env := setupTestEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -134,7 +71,7 @@ func TestWSJoinNewPlayer(t *testing.T) {
 }
 
 func TestWSJoinInvalidPayload(t *testing.T) {
-	env := setupWSTest(t)
+	env := setupTestEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -157,7 +94,7 @@ func TestWSJoinInvalidPayload(t *testing.T) {
 }
 
 func TestWSFirstMessageNotJoin(t *testing.T) {
-	env := setupWSTest(t)
+	env := setupTestEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -180,7 +117,7 @@ func TestWSFirstMessageNotJoin(t *testing.T) {
 }
 
 func TestWSSessionNotFound(t *testing.T) {
-	env := setupWSTest(t)
+	env := setupTestEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -188,65 +125,85 @@ func TestWSSessionNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected dial to fail for unknown session")
 	}
-	if resp != nil && resp.StatusCode != 404 {
+	if resp == nil {
+		// Dial failed without an HTTP response — acceptable (connection refused, etc.)
+		return
+	}
+	if resp.StatusCode != 404 {
 		t.Fatalf("expected 404, got %d", resp.StatusCode)
 	}
 }
 
 func TestWSActionValid(t *testing.T) {
-	env := setupWSTest(t)
+	env := setupTestEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	sess, _ := env.mgr.Create("tictactoe")
-	sess.AddPlayer("alice")
-	sess.AddPlayer("bob")
-	sess.Start()
+	sess, err := env.mgr.Create("tictactoe")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := sess.AddPlayer("alice"); err != nil {
+		t.Fatalf("add alice: %v", err)
+	}
+	if err := sess.AddPlayer("bob"); err != nil {
+		t.Fatalf("add bob: %v", err)
+	}
+	if err := sess.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
 
-	// Connect alice
+	// Connect both players
 	connAlice, _, err := websocket.Dial(ctx, wsURL(env.ts, sess.Code), nil)
 	if err != nil {
 		t.Fatalf("dial alice: %v", err)
 	}
 	defer connAlice.Close(websocket.StatusNormalClosure, "")
 
+	connBob, _, err := websocket.Dial(ctx, wsURL(env.ts, sess.Code), nil)
+	if err != nil {
+		t.Fatalf("dial bob: %v", err)
+	}
+	defer connBob.Close(websocket.StatusNormalClosure, "")
+
 	wsSend(ctx, t, connAlice, joinMsg("alice"))
-	// Read the state broadcast after join
-	wsRead(ctx, t, connAlice)
+	aliceState := wsRead(ctx, t, connAlice)
 
-	// Determine who goes first
-	ids := sess.PlayerIDs()
-	sess.RLock()
-	match := sess.Match
-	sess.RUnlock()
+	wsSend(ctx, t, connBob, joinMsg("bob"))
+	wsRead(ctx, t, connAlice) // broadcast from bob's join
+	bobState := wsRead(ctx, t, connBob)
 
-	firstPlayer := ""
-	for _, id := range ids {
-		actions := match.ValidActions(id)
-		if len(actions) > 0 {
-			firstPlayer = id
-			break
-		}
+	// Determine who has valid actions (goes first)
+	var aliceSP, bobSP statePayload
+	if err := json.Unmarshal(aliceState.Payload, &aliceSP); err != nil {
+		t.Fatalf("unmarshal alice state: %v", err)
+	}
+	if err := json.Unmarshal(bobState.Payload, &bobSP); err != nil {
+		t.Fatalf("unmarshal bob state: %v", err)
 	}
 
-	if firstPlayer != "alice" {
-		t.Skip("alice is not the first player in this match order")
+	// Pick the connection whose player has valid actions
+	var activeConn *websocket.Conn
+	if len(aliceSP.ValidActions) > 0 {
+		activeConn = connAlice
+	} else {
+		activeConn = connBob
 	}
 
-	// Send a move action
+	// Send a move action from the active player
 	movePayload, _ := json.Marshal(map[string]int{"cell": 0})
 	actionData, _ := json.Marshal(actionPayload{Action: game.Action{Type: "move", Payload: movePayload}})
-	wsSend(ctx, t, connAlice, WSMessage{Type: "action", Payload: actionData})
+	wsSend(ctx, t, activeConn, WSMessage{Type: "action", Payload: actionData})
 
 	// Read the state update
-	msg := wsRead(ctx, t, connAlice)
+	msg := wsRead(ctx, t, activeConn)
 	if msg.Type != "state" {
 		t.Fatalf("expected state after action, got %s", msg.Type)
 	}
 }
 
 func TestWSActionGameNotStarted(t *testing.T) {
-	env := setupWSTest(t)
+	env := setupTestEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -273,14 +230,16 @@ func TestWSActionGameNotStarted(t *testing.T) {
 	}
 
 	var ep errorPayload
-	json.Unmarshal(msg.Payload, &ep)
+	if err := json.Unmarshal(msg.Payload, &ep); err != nil {
+		t.Fatalf("unmarshal error payload: %v", err)
+	}
 	if ep.Message != "game not started" {
 		t.Fatalf("expected 'game not started', got %q", ep.Message)
 	}
 }
 
 func TestWSStartByHost(t *testing.T) {
-	env := setupWSTest(t)
+	env := setupTestEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -308,14 +267,16 @@ func TestWSStartByHost(t *testing.T) {
 
 	// Verify the game actually started
 	var sp statePayload
-	json.Unmarshal(msg.Payload, &sp)
+	if err := json.Unmarshal(msg.Payload, &sp); err != nil {
+		t.Fatalf("unmarshal state payload: %v", err)
+	}
 	if sp.SessionInfo.Status != session.StatusPlaying {
 		t.Fatalf("expected playing status, got %s", sp.SessionInfo.Status)
 	}
 }
 
 func TestWSStartByNonHost(t *testing.T) {
-	env := setupWSTest(t)
+	env := setupTestEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -341,14 +302,16 @@ func TestWSStartByNonHost(t *testing.T) {
 	}
 
 	var ep errorPayload
-	json.Unmarshal(msg.Payload, &ep)
+	if err := json.Unmarshal(msg.Payload, &ep); err != nil {
+		t.Fatalf("unmarshal error payload: %v", err)
+	}
 	if !strings.Contains(ep.Message, "host") {
 		t.Fatalf("expected host-related error, got %q", ep.Message)
 	}
 }
 
 func TestWSUnknownMessageType(t *testing.T) {
-	env := setupWSTest(t)
+	env := setupTestEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -372,21 +335,32 @@ func TestWSUnknownMessageType(t *testing.T) {
 	}
 
 	var ep errorPayload
-	json.Unmarshal(msg.Payload, &ep)
+	if err := json.Unmarshal(msg.Payload, &ep); err != nil {
+		t.Fatalf("unmarshal error payload: %v", err)
+	}
 	if !strings.Contains(ep.Message, "unknown") {
 		t.Fatalf("expected 'unknown' in error message, got %q", ep.Message)
 	}
 }
 
 func TestWSPayloadEncoding(t *testing.T) {
-	env := setupWSTest(t)
+	env := setupTestEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	sess, _ := env.mgr.Create("tictactoe")
-	sess.AddPlayer("alice")
-	sess.AddPlayer("bob")
-	sess.Start()
+	sess, err := env.mgr.Create("tictactoe")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := sess.AddPlayer("alice"); err != nil {
+		t.Fatalf("add alice: %v", err)
+	}
+	if err := sess.AddPlayer("bob"); err != nil {
+		t.Fatalf("add bob: %v", err)
+	}
+	if err := sess.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
 
 	conn, _, err := websocket.Dial(ctx, wsURL(env.ts, sess.Code), nil)
 	if err != nil {
@@ -427,55 +401,62 @@ func TestWSPayloadEncoding(t *testing.T) {
 }
 
 func TestWSGameCompletion(t *testing.T) {
-	env := setupWSTest(t)
+	env := setupTestEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	sess, _ := env.mgr.Create("tictactoe")
-	sess.AddPlayer("alice")
-	sess.AddPlayer("bob")
-	sess.Start()
-
-	// Get the match to determine player order
-	sess.RLock()
-	match := sess.Match
-	sess.RUnlock()
-
-	// Determine which player is X (goes first)
-	firstPlayer := ""
-	secondPlayer := ""
-	for _, id := range sess.PlayerIDs() {
-		actions := match.ValidActions(id)
-		if len(actions) > 0 {
-			firstPlayer = id
-		} else {
-			secondPlayer = id
-		}
+	sess, err := env.mgr.Create("tictactoe")
+	if err != nil {
+		t.Fatalf("create: %v", err)
 	}
-	if firstPlayer == "" || secondPlayer == "" {
-		t.Fatal("could not determine player order")
+	if err := sess.AddPlayer("alice"); err != nil {
+		t.Fatalf("add alice: %v", err)
+	}
+	if err := sess.AddPlayer("bob"); err != nil {
+		t.Fatalf("add bob: %v", err)
+	}
+	if err := sess.Start(); err != nil {
+		t.Fatalf("start: %v", err)
 	}
 
 	// Connect both players
-	connFirst, _, err := websocket.Dial(ctx, wsURL(env.ts, sess.Code), nil)
+	connAlice, _, err := websocket.Dial(ctx, wsURL(env.ts, sess.Code), nil)
 	if err != nil {
-		t.Fatalf("dial first: %v", err)
+		t.Fatalf("dial alice: %v", err)
 	}
-	defer connFirst.Close(websocket.StatusNormalClosure, "")
+	defer connAlice.Close(websocket.StatusNormalClosure, "")
 
-	connSecond, _, err := websocket.Dial(ctx, wsURL(env.ts, sess.Code), nil)
+	connBob, _, err := websocket.Dial(ctx, wsURL(env.ts, sess.Code), nil)
 	if err != nil {
-		t.Fatalf("dial second: %v", err)
+		t.Fatalf("dial bob: %v", err)
 	}
-	defer connSecond.Close(websocket.StatusNormalClosure, "")
+	defer connBob.Close(websocket.StatusNormalClosure, "")
 
-	wsSend(ctx, t, connFirst, joinMsg(firstPlayer))
-	wsRead(ctx, t, connFirst) // join state
+	wsSend(ctx, t, connAlice, joinMsg("alice"))
+	aliceState := wsRead(ctx, t, connAlice)
 
-	wsSend(ctx, t, connSecond, joinMsg(secondPlayer))
-	// After second player reconnects, both get broadcast
-	wsRead(ctx, t, connFirst)  // state broadcast from second join
-	wsRead(ctx, t, connSecond) // state broadcast from second join
+	wsSend(ctx, t, connBob, joinMsg("bob"))
+	wsRead(ctx, t, connAlice) // broadcast from bob's join
+	bobState := wsRead(ctx, t, connBob)
+
+	// Determine who goes first using validActions from state payload
+	var aliceSP, bobSP statePayload
+	if err := json.Unmarshal(aliceState.Payload, &aliceSP); err != nil {
+		t.Fatalf("unmarshal alice state: %v", err)
+	}
+	if err := json.Unmarshal(bobState.Payload, &bobSP); err != nil {
+		t.Fatalf("unmarshal bob state: %v", err)
+	}
+
+	var connFirst, connSecond *websocket.Conn
+	var firstPlayer string
+	if len(aliceSP.ValidActions) > 0 {
+		connFirst, connSecond = connAlice, connBob
+		firstPlayer = "alice"
+	} else {
+		connFirst, connSecond = connBob, connAlice
+		firstPlayer = "bob"
+	}
 
 	sendMove := func(conn *websocket.Conn, cell int) {
 		moveP, _ := json.Marshal(map[string]int{"cell": cell})
@@ -517,7 +498,9 @@ func TestWSGameCompletion(t *testing.T) {
 	}
 
 	var sp statePayload
-	json.Unmarshal(finalMsg.Payload, &sp)
+	if err := json.Unmarshal(finalMsg.Payload, &sp); err != nil {
+		t.Fatalf("unmarshal final state: %v", err)
+	}
 
 	if sp.Results == nil {
 		t.Fatal("expected results in final state")
